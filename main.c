@@ -29,11 +29,14 @@ const char *USAGE_STATEMENT = \
 
 void usage() {
     char *name;
+    unsigned is_base;
+
+    is_base = 0;
     name = strrchr(program_name, '/');
-    if (name == NULL) {
-        name = program_name;
+    if (name != NULL) {
+        is_base = 1;
     }
-    printf(USAGE_STATEMENT, name + 1, VERSION);
+    printf(USAGE_STATEMENT, is_base ? name + 1 : program_name, VERSION);
 }
 
 int edit_file(const char *filename) {
