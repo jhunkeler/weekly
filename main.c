@@ -168,13 +168,16 @@ int edit_file(const char *filename) {
 
     // Allow the user to override the default editor (vi/notepad)
     user_editor = getenv("EDITOR");
+    char *editor_path;
     if (user_editor != NULL) {
-        strcpy(editor, find_program(user_editor));
+        editor_path = find_program(user_editor);
+        if (editor_path != NULL) {
+            sprintf(editor, "\"%s\"", editor_path);
+        }
     } else {
-        char *editor_path;
         editor_path = find_program("vim");
         if (editor_path != NULL) {
-            strcpy(editor, editor_path);
+            sprintf(editor, "\"%s\"", editor_path);
         }
 #if HAVE_WINDOWS
         else {
@@ -183,7 +186,7 @@ int edit_file(const char *filename) {
 #endif
     }
 
-    if (!find_program(editor)) {
+    if (!strlen(editor)) {
         fprintf(stderr, "Unable to find editor: %s\n", editor);
         exit(1);
     }
