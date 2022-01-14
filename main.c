@@ -50,6 +50,7 @@
     #include <sys/stat.h>
     #include <unistd.h>
     #include <pwd.h>
+    #include <errno.h>
     #define DIRSEP_C '/'
     #define DIRSEP_S "/"
     #define PATHSEP_C ':'
@@ -95,18 +96,27 @@ void usage() {
     printf(USAGE_STATEMENT, is_base ? name + 1 : program_name, VERSION);
 }
 
-int find_program(const char *name) {
+char *find_program(const char *name) {
+    static char exe[PATH_MAX] = {0};
     char *token;
-    int found;
-    int found_extension;
     char *pathvar;
+    char *abs_prefix[] = {
+        "/", "./", ".\\"
+    };
+    int found_extension;
+
+    for (size_t i = 0; i < sizeof(abs_prefix) / sizeof(char *); i++) {
+        if ((strlen(name) > 1 && name[1] == ':') || !strncmp(name, abs_prefix[i], strlen(abs_prefix[i]))) {
+            strcpy(exe, name);
+            return exe;
+        }
+    }
 
     pathvar = getenv(PATHVAR);
     if (!pathvar) {
-        return -1;
+        return NULL;
     }
 
-    found = 0;
     token = strtok(pathvar, PATHSEP_S);
     while (token != NULL) {
         char filename[PATH_MAX] = {0};
@@ -128,28 +138,26 @@ int find_program(const char *name) {
                 strcpy(filename_orig, filename);
                 strcat(filename, ext[i]);
                 if (access(filename, F_OK) == 0) {
-                    found = 1;
-                    break;
+                    strcpy(exe, filename);
+                    return exe;
                 }
                 strcpy(filename, filename_orig);
             }
         } else {
             if (access(filename, F_OK) == 0) {
-                found = 1;
-                break;
+                strcpy(exe, filename);
+                return exe;
             }
         }
-        if (found)
-            break;
 #else
         if (access(filename, F_OK) == 0) {
-            found = 1;
-            break;
+            strcpy(exe, filename);
+            return exe;
         }
 #endif
         token = strtok(NULL, PATHSEP_S);
     }
-    return found;
+    return NULL;
 }
 
 int edit_file(const char *filename) {
@@ -161,10 +169,12 @@ int edit_file(const char *filename) {
     // Allow the user to override the default editor (vi/notepad)
     user_editor = getenv("EDITOR");
     if (user_editor != NULL) {
-        strcpy(editor, user_editor);
+        strcpy(editor, find_program(user_editor));
     } else {
-        if (find_program("vim")) {
-            strcpy(editor, "vim");
+        char *editor_path;
+        editor_path = find_program("vim");
+        if (editor_path != NULL) {
+            strcpy(editor, editor_path);
         }
 #if HAVE_WINDOWS
         else {
@@ -178,9 +188,11 @@ int edit_file(const char *filename) {
         exit(1);
     }
 
-    // When using vi, set editor cursor to the end of the file
+    // Tell editor to jump to the end of the file (when supported)
     if(strstr(editor, "vim") || strstr(editor, "vi")) {
-        strcat(editor, " + -c \"set nobackup\" ");
+        strcat(editor, " +");
+    } else if (strstr(editor, "nano") != NULL) {
+        strcat(editor, " +9999");
     }
 
     sprintf(editor_cmd, "%s %s", editor, filename);
@@ -598,5 +610,7 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    // Inform the user
+    printf("Message written to: %s\n", journalfile);
     return 0;
 }
