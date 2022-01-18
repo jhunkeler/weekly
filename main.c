@@ -64,16 +64,21 @@
 
 #define ARG(X) strcmp(argv[i], X) == 0
 #define ARG_VERIFY_NEXT() (argv[i+1] != NULL)
+#define RECORD_STYLE_SHORT 0
+#define RECORD_STYLE_LONG 1
+#define RECORD_STYLE_CSV 2
+#define RECORD_STYLE_DICT 3
 
 char *program_name;
 char *homedir;
 char journalroot[PATH_MAX] = {0};
 char intermediates[PATH_MAX] = {0};
 const char *VERSION = "1.0.0";
-const char *FMT_HEADER = "## date:   %s\n"
+const char *FMT_HEADER = "\x01\x01\x01## date:   %s\n"
                          "## time:   %s\n"
                          "## author: %s\n"
-                         "## host:   %s\n";
+                         "## host:   %s\n\x02\x02\x02";
+const char *FMT_FOOTER = "\x03\x03\x03";
 const char *USAGE_STATEMENT = \
     "usage: %s [-h] [-V] [-dDy] [-]\n\n"
     "Weekly Report Generator v%s\n\n"
@@ -82,6 +87,11 @@ const char *USAGE_STATEMENT = \
     "--dump-relative    -d        Dump records relative to current week\n"
     "--dump-absolute    -D        Dump records by week value\n"
     "--dump-year        -y        Set dump-[relative|absolute] year\n"
+    "--dump-style       -s        Set output style:\n"
+    "                               long (default)\n"
+    "                               short\n"
+    "                               csv\n"
+    "                               dict\n"
     "--version          -V        Show version\n";
 
 void usage() {
@@ -97,13 +107,15 @@ void usage() {
 }
 
 char *find_program(const char *name) {
+#if HAVE_WINDOWS
+    int found_extension;
+#endif
     static char exe[PATH_MAX] = {0};
     char *token;
     char *pathvar;
     char *abs_prefix[] = {
         "/", "./", ".\\"
     };
-    int found_extension;
 
     for (size_t i = 0; i < sizeof(abs_prefix) / sizeof(char *); i++) {
         if ((strlen(name) > 1 && name[1] == ':') || !strncmp(name, abs_prefix[i], strlen(abs_prefix[i]))) {
@@ -170,10 +182,7 @@ int edit_file(const char *filename) {
     user_editor = getenv("EDITOR");
     char *editor_path;
     if (user_editor != NULL) {
-        editor_path = find_program(user_editor);
-        if (editor_path != NULL) {
-            sprintf(editor, "\"%s\"", editor_path);
-        }
+        sprintf(editor, "%s", user_editor);
     } else {
         editor_path = find_program("vim");
         if (editor_path != NULL) {
@@ -192,7 +201,8 @@ int edit_file(const char *filename) {
     }
 
     // Tell editor to jump to the end of the file (when supported)
-    if(strstr(editor, "vim") || strstr(editor, "vi")) {
+    // Standard 'vi' does not support '+'
+    if(strstr(editor, "vim")) {
         strcat(editor, " +");
     } else if (strstr(editor, "nano") != NULL) {
         strcat(editor, " +9999");
@@ -240,25 +250,31 @@ ssize_t get_file_size(const char *filename) {
     return result;
 }
 
-char *init_tempfile(const char *basepath, char *data) {
+char *init_tempfile(const char *basepath, const char *ident, char *data) {
     FILE *fp;
-    static char tempfile[PATH_MAX];
-    sprintf(tempfile, "%s%cweekly.XXXXXX", basepath, DIRSEP_C);
-    if ((mkstemp(tempfile)) < 0) {
+    char *filename;
+    filename = calloc(PATH_MAX, sizeof(char));
+    sprintf(filename, "%s%cweekly_%s.XXXXXX", basepath, DIRSEP_C, ident);
+    if ((mkstemp(filename)) < 0) {
         return NULL;
     }
-    unlink(tempfile);
+    unlink(filename);
 
-    fp = fopen(tempfile, "w+");
+    fp = fopen(filename, "w+b");
+    if (!fp) {
+        return NULL;
+    }
+
     if (data != NULL) {
-        fprintf(fp, "%s\n", data);
+        fwrite(data, sizeof(char), strlen(data), fp);
+        //fprintf(fp, "%s\n", data);
     }
     fclose(fp);
 
-    if (chmod(tempfile, 0600) < 0) {
+    if (chmod(filename, 0600) < 0) {
         return NULL;
     }
-    return tempfile;
+    return filename;
 }
 
 int append_stdin(const char *filename) {
@@ -275,6 +291,7 @@ int append_stdin(const char *filename) {
     fp = fopen(filename, "a");
     if (!fp) {
         perror(filename);
+        free(buf);
         return -1;
     }
 
@@ -296,38 +313,202 @@ int append_contents(const char *dest, const char *src) {
     char buf[BUFSIZ] = {0};
     FILE *fpi, *fpo;
 
-    fpi = fopen(src, "r");
+    fpi = fopen(src, "rb+");
     if (!fpi) {
         perror(src);
         return -1;
     }
 
-    fpo = fopen(dest, "a");
+    fpo = fopen(dest, "ab+");
     if (!fpo) {
         perror(dest);
+        fclose(fpi);
         return -1;
     }
 
     // Append source file to destination file
-    while (fgets(buf, sizeof(buf), fpi) != NULL) {
-        fprintf(fpo, "%s", buf);
+    while (fread(buf, sizeof(char), sizeof(buf), fpi) > 0) {
+        fwrite(buf, sizeof(char), strlen(buf), fpo);
     }
-    fprintf(fpo, "\n");
+    buf[0] = '\n';
+    fwrite(buf, sizeof(char), 1, fpo);
 
     fclose(fpo);
     fclose(fpi);
     return 0;
 }
 
-int dump_file(const char *filename) {
-    char buf[BUFSIZ] = {0};
+struct Record {
+    char *date;
+    char *time;
+    char *user;
+    char *host;
+    char *data;
+};
+
+void record_free(struct Record *record) {
+    if (record != NULL) {
+        free(record->date);
+        free(record->time);
+        free(record->host);
+        free(record->user);
+        free(record->data);
+        free(record);
+    }
+}
+
+struct Record *record_parse(const char *content) {
+    char *next;
+    struct Record *result;
+
+    result = calloc(1, sizeof(*result));
+    if (!result) {
+        perror("Unable to allocate record");
+        return NULL;
+    }
+
+    char *p = strdup(content);
+    next = strtok(p, "\n");
+    while (next != NULL) {
+        char key[10] = {0};
+        char value[255] = {0};
+
+        sscanf(next, "## %9[^: ]:%254s[^\n]", key, value);
+        if (strncmp(next, "## ", 2) != 0) {
+            break;
+        }
+        if (!strcmp(key, "date"))
+            result->date = strdup(value);
+        else if (!strcmp(key, "time"))
+            result->time = strdup(value);
+        else if (!strcmp(key, "author"))
+            result->user = strdup(value);
+        else if (!strcmp(key, "host"))
+            result->host = strdup(value);
+
+        next = strtok(NULL, "\n");
+    }
+
+    if (next != NULL) {
+        if (memcmp(next, "\x02\x02\x02", 3) == 0) {
+            next += 4;
+        }
+        result->data = strdup(next);
+    } else {
+        // Empty data record, die
+        record_free(result);
+        result = NULL;
+    }
+
+    free(p);
+    return result;
+}
+
+struct Record *get_records(FILE **fp) {
+    ssize_t soh, sot, eot;
+    size_t record_size;
+    char task[2] = {0};
+    char *buf = calloc(BUFSIZ, sizeof(char));
+
+    if (!buf) {
+        return NULL;
+    }
+
+    if (!*fp) {
+        free(buf);
+        return NULL;
+    }
+
+    // Start of header offset
+    soh = 0;
+    // Start of text offset
+    sot = 0;
+    // End of text offset
+    eot = 0;
+
+    while (fread(task, sizeof(char), 1, *fp) > 0) {
+        if (task[0] == '\x01' && fread(task, sizeof(char), 2, *fp) > 0) {
+            // start header
+            if (memcmp(task, "\x01\x01", 2) == 0) {
+                soh = ftell(*fp);
+            }
+        } else if (task[0] == '\x02' && fread(task, sizeof(char), 2, *fp) > 0) {
+            if (memcmp(task, "\x02\x02", 2) == 0) {
+                sot = ftell(*fp);
+            }
+            // start of text
+        } else if (task[0] == '\x03' && fread(task, sizeof(char), 2, *fp) > 0) {
+            if (memcmp(task, "\x03\x03", 2) == 0) {
+                eot = ftell(*fp);
+                break;
+            }
+        } else {
+            continue;
+        }
+        memset(task, '\0', sizeof(task));
+    }
+
+    // Verify the record is not too small, and contained a start of text marker
+    record_size = eot - soh;
+    if (record_size < 1 && !sot) {
+        free(buf);
+        return NULL;
+    }
+
+    // Go back to start of header
+    fseek(*fp, soh, SEEK_SET);
+    // Read the entire record
+    fread(buf, sizeof(char), record_size, *fp);
+    // Remove end of text marker
+    memset(buf + (record_size - 4), '\0', 4);
+    // Truncate buffer at end of line
+    buf[strlen(buf) - 1] = '\0';
+
+    // Emit record
+    struct Record *result;
+    result = record_parse(buf);
+
+    free(buf);
+
+    return result;
+}
+
+void record_show(struct Record *record, int style) {
+    const char *fmt;
+    switch (style) {
+        case RECORD_STYLE_LONG:
+            fmt = "## Date: %s\n## Time: %s\n## User: %s\n## Host: %s\n%s\n";
+            break;
+        case RECORD_STYLE_CSV:
+            fmt = "%s,%s,%s,%s,\"%s\"";  // Trailing linefeed omitted for visual clarity
+            break;
+        case RECORD_STYLE_DICT:
+            fmt = "{"
+                  "\"date\": \"%s\",\n"
+                  "\"time\": \"%s\",\n"
+                  "\"user\": \"%s\",\n"
+                  "\"host\": \"%s\",\n"
+                  "\"data\": \"%s\"}\n";
+            break;
+        case RECORD_STYLE_SHORT:
+        default:
+            fmt = "%s - %s - %s (%s):\n%s\n";
+            break;
+    }
+    printf(fmt, record->date, record->time, record->user, record->host, record->data);
+}
+
+int dump_file(const char *filename, int style) {
     FILE *fp;
     fp = fopen(filename, "r");
     if (!fp) {
         return -1;
     }
-    while ((fgets(buf, BUFSIZ, fp)) != NULL) {
-        printf("%s", buf);
+    struct Record *record;
+    while ((record = get_records(&fp)) != NULL) {
+        record_show(record, style);
+        record_free(record);
+        puts("");
     }
     fclose(fp);
     return 0;
@@ -375,7 +556,7 @@ int dir_empty(const char *path) {
 }
 #endif
 
-int dump_week(const char *root, int year, int week) {
+int dump_week(const char *root, int year, int week, int style) {
     char path_week[PATH_MAX] = {0};
     char path_year[PATH_MAX] = {0};
     const int max_days = 7;
@@ -390,7 +571,7 @@ int dump_week(const char *root, int year, int week) {
     for (int i = 0; i < max_days; i++) {
         char tmp[PATH_MAX];
         sprintf(tmp, "%s%c%d", path_week, DIRSEP_C, i);
-        dump_file(tmp);
+        dump_file(tmp, style);
     }
     return 0;
 }
@@ -418,18 +599,23 @@ int main(int argc, char *argv[]) {
     char timestamp[255] = {0};
 
     // Path and data buffers
+    char *headerfile;
     char *tempfile;
+    char *footerfile;
     char journalfile[PATH_MAX] = {0};
     char header[255];
+    char footer[255];
 
     // Argument triggers
     int do_stdin;
     int do_dump;
     int do_year;
-    int uyear;
-    char *uyear_error;
-    int uweek;
-    char *uweek_error;
+    int do_style;
+    int user_year;
+    char *user_year_error;
+    int user_week;
+    char *user_week_error;
+    int style;
 
     // Set program name
     program_name = argv[0];
@@ -439,8 +625,10 @@ int main(int argc, char *argv[]) {
     tm_ = localtime(&t);
     // Time data fix ups
     year = tm_->tm_year + 1900;
-    week = (tm_->tm_yday + 7 - (tm_->tm_wday ? (tm_->tm_wday - 1) : 6)) / 7;
+    week = (tm_->tm_yday + 7 - (tm_->tm_wday + 1 ? (tm_->tm_wday - 1) : 6)) / 7;
     day_of_week = tm_->tm_wday;
+    // Set default output style
+    style = RECORD_STYLE_LONG;
 
 #if HAVE_WINDOWS
     // Get system name
@@ -474,21 +662,17 @@ int main(int argc, char *argv[]) {
     strftime(timestamp, sizeof(timestamp) - 1, "%H:%M:%S", tm_);
 
     // Populate header string
-#if HAVE_WINDOWS
     sprintf(header, FMT_HEADER, datestamp, timestamp, username, sysname);
+    // Populate footer string
+    strcpy(footer, FMT_FOOTER);
+    // Populate path(s)
     sprintf(journalroot, "%s%c.weekly", homedir, DIRSEP_C);
-#else
-    sprintf(header, FMT_HEADER, datestamp, timestamp, user->pw_name, sysname);
-    sprintf(journalroot, "%s%c.weekly", homedir, DIRSEP_C);
-#endif
     sprintf(intermediates, "%s%ctmp", journalroot, DIRSEP_C);
 
     // Prime argument triggers
     do_stdin = 0;
     do_dump = 0;
     do_year = 0;
-    uyear = year;
-    uweek = week;
 
     // Parse user arguments
     for (int i = 1; i < argc; i++) {
@@ -505,23 +689,23 @@ int main(int argc, char *argv[]) {
         }
         if (ARG("-d") || ARG("--dump-relative")) {
             if (ARG_VERIFY_NEXT()) {
-                uweek = (int) strtol(argv[i + 1], &uweek_error, 10);
-                if (*uweek_error != '\0') {
+                user_week = (int) strtol(argv[i + 1], &user_week_error, 10);
+                if (*user_week_error != '\0') {
                     fprintf(stderr, "Invalid integer\n");
                     exit(1);
                 }
-                week -= uweek;
+                week -= user_week;
             }
             do_dump = 1;
         }
         if (ARG("-D") || ARG("--dump-absolute")) {
             if (ARG_VERIFY_NEXT()) {
-                uweek = (int) strtol(argv[i + 1], &uweek_error, 10);
-                if (*uweek_error != '\0') {
+                user_week = (int) strtol(argv[i + 1], &user_week_error, 10);
+                if (*user_week_error != '\0') {
                     fprintf(stderr, "Invalid integer\n");
                     exit(1);
                 }
-                week = uweek;
+                week = user_week;
             }
             do_dump = 1;
         }
@@ -530,13 +714,29 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "--dump-year (-y) requires an integer year\n");
                 exit(1);
             }
-            uyear = (int) strtol(argv[i + 1], &uyear_error, 10);
-            if (*uyear_error != '\0') {
+            user_year = (int) strtol(argv[i + 1], &user_year_error, 10);
+            if (*user_year_error != '\0') {
                 fprintf(stderr, "Invalid integer\n");
                 exit(1);
             }
-            year = uyear;
+            year = user_year;
             do_year = 1;
+        }
+        if (ARG("-s") || ARG("--dump-style")) {
+            if (!ARG_VERIFY_NEXT()) {
+                fprintf(stderr, "--dump-style (-s) requires a style argument (i.e. short, long, csv, dict)\n");
+                exit(1);
+            }
+            if (!strcmp(argv[i + 1], "short")) {
+                style = RECORD_STYLE_SHORT;
+            } else if (!strcmp(argv[i + 1], "long")) {
+                style = RECORD_STYLE_LONG;
+            } else if (!strcmp(argv[i + 1], "csv")) {
+                style = RECORD_STYLE_CSV;
+            } else if (!strcmp(argv[i + 1], "dict")) {
+                style = RECORD_STYLE_DICT;
+            }
+            do_style = 1;
         }
     }
 
@@ -545,11 +745,16 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    if (do_style && !do_dump) {
+        fprintf(stderr, "Option --dump-style (-s) requires options -d or -D\n");
+        exit(1);
+    }
+
     if (do_dump) {
-        if (week < 0) {
-            week = 0;
+        if (week < 1) {
+            week = 1;
         }
-        if (dump_week(journalroot, year, week) < 0) {
+        if (dump_week(journalroot, year, week, style) < 0) {
             fprintf(stderr, "No entries found for week %d of %d\n", week, year);
             exit(1);
         }
@@ -561,16 +766,30 @@ int main(int argc, char *argv[]) {
 
     // Write header string to temporary file
     make_path(intermediates);
-    if ((tempfile = init_tempfile(intermediates, header)) == NULL) {
+
+    if ((headerfile = init_tempfile(intermediates, "header", header)) == NULL) {
+        perror("Unable to create temporary header file");
+        exit(1);
+    }
+
+    char nothing[1] = {0};
+    if ((tempfile = init_tempfile(intermediates, "tempfile", nothing)) == NULL) {
         perror("Unable to create temporary file");
         exit(1);
     }
 
+    if ((footerfile = init_tempfile(intermediates, "footer", footer)) == NULL) {
+        perror("Unable to create footer file");
+        exit(1);
+    }
+
     // Create new weekly journalfile path
-    if (make_output_path(journalroot, journalfile, year, week, day_of_week) < 0) {
+    if (!make_output_path(journalroot, journalfile, year, week, day_of_week)) {
         fprintf(stderr, "Unable to create output path: %s (%s)\n", journalfile, strerror(errno));
         perror(journalfile);
+        unlink(headerfile);
         unlink(tempfile);
+        unlink(footerfile);
         exit(1);
     }
 
@@ -597,7 +816,15 @@ int main(int argc, char *argv[]) {
     tempfile_newsize = get_file_size(tempfile);
     if (tempfile_newsize <= tempfile_size) {
         fprintf(stderr, "Empty message, aborting.\n");
+        unlink(headerfile);
         unlink(tempfile);
+        unlink(footerfile);
+        exit(1);
+    }
+
+    // Copy data from the header file to the weekly journal path
+    if (append_contents(journalfile, headerfile) < 0) {
+        fprintf(stderr, "Unable to append contents of '%s' to '%s' (%s)\n", headerfile, journalfile, strerror(errno));
         exit(1);
     }
 
@@ -607,10 +834,21 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    // Nuke the temporary file
-    if (unlink(tempfile) < 0) {
-        fprintf(stderr, "Unable to remove temporary file: %s (%s)\n", tempfile, strerror(errno));
+    // Copy data from the footer file to the weekly journal path
+    if (append_contents(journalfile, footerfile) < 0) {
+        fprintf(stderr, "Unable to append contents of '%s' to '%s' (%s)\n", footerfile, journalfile, strerror(errno));
         exit(1);
+    }
+
+    // Nuke the temporary files (report on error, but keep going)
+    if (access(headerfile, F_OK) == 0 && unlink(headerfile) < 0) {
+        fprintf(stderr, "Unable to remove header file: %s (%s)\n", headerfile, strerror(errno));
+    }
+    if (access(tempfile, F_OK) == 0 && unlink(tempfile) < 0) {
+        fprintf(stderr, "Unable to remove temporary file: %s (%s)\n", tempfile, strerror(errno));
+    }
+    if (access(footerfile, F_OK) == 0 && unlink(footerfile) < 0) {
+        fprintf(stderr, "Unable to remove footer file: %s (%s)\n", footerfile, strerror(errno));
     }
 
     // Inform the user
