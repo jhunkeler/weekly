@@ -80,7 +80,7 @@ const char *FMT_HEADER = "\x01\x01\x01## date:   %s\n"
                          "## host:   %s\n\x02\x02\x02";
 const char *FMT_FOOTER = "\x03\x03\x03";
 const char *USAGE_STATEMENT = \
-    "usage: %s [-h] [-V] [-dDy] [-]\n\n"
+    "usage: %s [-h] [-V] [-dDys] [-]\n\n"
     "Weekly Report Generator v%s\n\n"
     "Options:\n"
     "--help             -h        Show this usage statement\n"
