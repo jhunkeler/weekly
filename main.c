@@ -37,10 +37,6 @@ void usage() {
     printf(USAGE_STATEMENT, is_base ? name + 1 : program_name, VERSION);
 }
 
-
-
-
-
 int main(int argc, char *argv[]) {
     // System info
     char sysname[255] = {0};
@@ -138,6 +134,7 @@ int main(int argc, char *argv[]) {
     do_stdin = 0;
     do_dump = 0;
     do_year = 0;
+    do_style = 0;
 
     // Parse user arguments
     for (int i = 1; i < argc; i++) {
@@ -153,8 +150,8 @@ int main(int argc, char *argv[]) {
             do_stdin = 1;
         }
         if (ARG("-d") || ARG("--dump-relative")) {
-            if (ARG_VERIFY_NEXT()) {
-                user_week = (int) strtol(argv[i + 1], &user_week_error, 10);
+            if (ARG_NEXT_EXISTS) {
+                user_week = (int) strtol(ARG_NEXT, &user_week_error, 10);
                 if (*user_week_error != '\0') {
                     fprintf(stderr, "Invalid integer\n");
                     exit(1);
@@ -164,8 +161,8 @@ int main(int argc, char *argv[]) {
             do_dump = 1;
         }
         if (ARG("-D") || ARG("--dump-absolute")) {
-            if (ARG_VERIFY_NEXT()) {
-                user_week = (int) strtol(argv[i + 1], &user_week_error, 10);
+            if (ARG_NEXT_EXISTS) {
+                user_week = (int) strtol(ARG_NEXT, &user_week_error, 10);
                 if (*user_week_error != '\0') {
                     fprintf(stderr, "Invalid integer\n");
                     exit(1);
@@ -175,11 +172,11 @@ int main(int argc, char *argv[]) {
             do_dump = 1;
         }
         if (ARG("-y") || ARG("--dump-year")) {
-            if (!ARG_VERIFY_NEXT()) {
+            if (!ARG_NEXT_EXISTS) {
                 fprintf(stderr, "--dump-year (-y) requires an integer year\n");
                 exit(1);
             }
-            user_year = (int) strtol(argv[i + 1], &user_year_error, 10);
+            user_year = (int) strtol(ARG_NEXT, &user_year_error, 10);
             if (*user_year_error != '\0') {
                 fprintf(stderr, "Invalid integer\n");
                 exit(1);
@@ -188,17 +185,17 @@ int main(int argc, char *argv[]) {
             do_year = 1;
         }
         if (ARG("-s") || ARG("--dump-style")) {
-            if (!ARG_VERIFY_NEXT()) {
+            if (!ARG_NEXT_EXISTS) {
                 fprintf(stderr, "--dump-style (-s) requires a style argument (i.e. short, long, csv, dict)\n");
                 exit(1);
             }
-            if (!strcmp(argv[i + 1], "short")) {
+            if (!strcmp(ARG_NEXT, "short")) {
                 style = RECORD_STYLE_SHORT;
-            } else if (!strcmp(argv[i + 1], "long")) {
+            } else if (!strcmp(ARG_NEXT, "long")) {
                 style = RECORD_STYLE_LONG;
-            } else if (!strcmp(argv[i + 1], "csv")) {
+            } else if (!strcmp(ARG_NEXT, "csv")) {
                 style = RECORD_STYLE_CSV;
-            } else if (!strcmp(argv[i + 1], "dict")) {
+            } else if (!strcmp(ARG_NEXT, "dict")) {
                 style = RECORD_STYLE_DICT;
             }
             do_style = 1;
