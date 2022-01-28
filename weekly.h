@@ -65,7 +65,8 @@
 #endif
 
 #define ARG(X) strcmp(argv[i], X) == 0
-#define ARG_VERIFY_NEXT() (argv[i+1] != NULL)
+#define ARG_NEXT_EXISTS (argv[i+1] != NULL)
+#define ARG_NEXT argv[i+1]
 #define RECORD_STYLE_SHORT 0
 #define RECORD_STYLE_LONG 1
 #define RECORD_STYLE_CSV 2
