@@ -111,7 +111,7 @@ char *find_program(const char *name) {
 ssize_t get_file_size(const char *filename) {
     ssize_t result;
     FILE *fp;
-    fp = fopen(filename, "r");
+    fp = fopen(filename, "rb+");
     if (!fp) {
         return -1;
     }

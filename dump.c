@@ -2,7 +2,7 @@
 
 int dump_file(const char *filename, int style) {
     FILE *fp;
-    fp = fopen(filename, "r");
+    fp = fopen(filename, "rb+");
     if (!fp) {
         return -1;
     }
