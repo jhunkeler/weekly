@@ -29,7 +29,19 @@ Records are stored in the format below. Each record contains the date, time, use
 \x03\x03\x03\n
 ```
 
-# Example
+The `HEADER` block uses the format, `## KEY: VALUE`, is not size limited. A `HEADER` ends with three SOT control codes (`0x02` ASCII "Start of Text").
+
+## Example header block
+```text
+## date: 01/18/2022
+## time: 15:16:14
+## author: example
+## host:   mycomputer.lan
+```
+
+The `MESSAGE` block is not size limited and ends with three EOT control codes (`0x03` ASCII "End of Text").
+
+# Using your favorite editor
 
 If the `EDITOR` environment variable is not defined, `vim` will be opened by default on *NIX systems, and `notepad` on Windows. To change the editor set `EDITOR` to the desired value:
 ```shell
@@ -117,6 +129,10 @@ This is you typing out a message to yourself. It can be whatever you want.
 usage: weekly [-h] [-V] [-dDys] [-]
 
 Weekly Report Generator v1.0.0
+
+Environment Variables:
+WEEKLY_JOURNAL_ROOT          Override journal destination
+                               (i.e. /shared/resource/weeklies/$USER)
 
 Options:
 --help             -h        Show this usage statement
