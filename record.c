@@ -28,7 +28,7 @@ struct Record *record_parse(const char *content) {
         char value[255] = {0};
 
         sscanf(next, "## %9[^: ]:%254s[^\n]", key, value);
-        if (strncmp(next, "## ", 2) != 0) {
+        if (strncmp(next, "## ", 3) != 0) {
             break;
         }
         if (!strcmp(key, "date"))
@@ -62,14 +62,9 @@ struct Record *record_read(FILE **fp) {
     ssize_t soh, sot, eot;
     size_t record_size;
     char task[2] = {0};
-    char *buf = calloc(BUFSIZ, sizeof(char));
-
-    if (!buf) {
-        return NULL;
-    }
+    char *buf;
 
     if (!*fp) {
-        free(buf);
         return NULL;
     }
 
@@ -105,8 +100,14 @@ struct Record *record_read(FILE **fp) {
     // Verify the record is not too small, and contained a start of text marker
     record_size = eot - soh;
     if (record_size < 1 && !sot) {
-        free(buf);
         return NULL;
+    }
+
+    // Allocate enough space for the record
+    buf = calloc(record_size + 1, sizeof(char));
+    if (!buf) {
+        perror("Unable to allocate record");
+        exit(1);
     }
 
     // Go back to start of header
