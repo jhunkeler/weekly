@@ -13,6 +13,9 @@ const char *FMT_FOOTER = "\x03\x03\x03";
 const char *USAGE_STATEMENT = \
     "usage: %s [-h] [-V] [-dDys] [-]\n\n"
     "Weekly Report Generator v%s\n\n"
+    "Environment Variables:\n"
+    "WEEKLY_JOURNAL_ROOT          Override journal destination\n"
+    "                               (e.g., /shared/weeklies/$USER)\n\n"
     "Options:\n"
     "--help             -h        Show this usage statement\n"
     "--dump-relative    -d        Dump records relative to current week\n"
@@ -77,6 +80,7 @@ int main(int argc, char *argv[]) {
     int user_week;
     char *user_week_error;
     int style;
+    char *user_journalroot;
 
     // Set program name
     program_name = argv[0];
@@ -127,7 +131,11 @@ int main(int argc, char *argv[]) {
     // Populate footer string
     strcpy(footer, FMT_FOOTER);
     // Populate path(s)
-    sprintf(journalroot, "%s%c.weekly", homedir, DIRSEP_C);
+    if ((user_journalroot = getenv("WEEKLY_JOURNAL_ROOT")) != NULL) {
+        strcpy(journalroot, user_journalroot);
+    } else {
+        sprintf(journalroot, "%s%c.weekly", homedir, DIRSEP_C);
+    }
     sprintf(intermediates, "%s%ctmp", journalroot, DIRSEP_C);
 
     // Prime argument triggers
@@ -215,6 +223,11 @@ int main(int argc, char *argv[]) {
     if (do_dump) {
         if (week < 1) {
             week = 1;
+        }
+        if (access(journalroot, F_OK) < 0) {
+            fprintf(stderr, "Unable to read week %d of %d from journal root: %s: %s\n",
+                    week, year, strerror(errno), journalroot);
+            exit(1);
         }
         if (dump_week(journalroot, year, week, style) < 0) {
             fprintf(stderr, "No entries found for week %d of %d\n", week, year);
