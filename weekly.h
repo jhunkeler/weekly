@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <time.h>
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -71,6 +72,7 @@
 #define RECORD_STYLE_LONG 1
 #define RECORD_STYLE_CSV 2
 #define RECORD_STYLE_DICT 3
+#define WEEK_MAX 54
 
 struct Record {
     char *date;

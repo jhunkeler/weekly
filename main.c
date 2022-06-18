@@ -18,6 +18,7 @@ const char *USAGE_STATEMENT = \
     "                               (e.g., /shared/weeklies/$USER)\n\n"
     "Options:\n"
     "--help             -h        Show this usage statement\n"
+    "--all              -a        Dump all records\n"
     "--dump-relative    -d        Dump records relative to current week\n"
     "--dump-absolute    -D        Dump records by week value\n"
     "--dump-year        -y        Set dump-[relative|absolute] year\n"
@@ -75,6 +76,7 @@ int main(int argc, char *argv[]) {
     int do_dump;
     int do_year;
     int do_style;
+    int do_all;
     int user_year;
     char *user_year_error;
     int user_week;
@@ -143,6 +145,7 @@ int main(int argc, char *argv[]) {
     do_dump = 0;
     do_year = 0;
     do_style = 0;
+    do_all = 0;
 
     // Parse user arguments
     for (int i = 1; i < argc; i++) {
@@ -156,6 +159,10 @@ int main(int argc, char *argv[]) {
         }
         if (ARG("-")) {
             do_stdin = 1;
+        }
+        if (ARG("-a") || ARG("--all")) {
+            do_all = 1;
+            do_dump = 1;
         }
         if (ARG("-d") || ARG("--dump-relative")) {
             if (ARG_NEXT_EXISTS) {
@@ -225,13 +232,26 @@ int main(int argc, char *argv[]) {
             week = 1;
         }
         if (access(journalroot, F_OK) < 0) {
-            fprintf(stderr, "Unable to read week %d of %d from journal root: %s: %s\n",
-                    week, year, strerror(errno), journalroot);
+            fprintf(stderr, "Unable to access %s: %s\n", journalroot, strerror(errno));
             exit(1);
         }
-        if (dump_week(journalroot, year, week, style) < 0) {
-            fprintf(stderr, "No entries found for week %d of %d\n", week, year);
-            exit(1);
+        if (do_all) {
+            struct dirent *dp;
+            DIR *dir;
+            dir = opendir(journalroot);
+            while ((dp = readdir(dir)) != NULL) {
+                if (!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, ".."))
+                    continue;
+                if (isdigit(*dp->d_name)) {
+                    for (int w = week; w < WEEK_MAX; w++)
+                        dump_week(journalroot, year, w, style);
+                }
+            }
+        } else {
+            if (dump_week(journalroot, year, week, style) < 0) {
+                fprintf(stderr, "No entries found for week %d of %d\n", week, year);
+                exit(1);
+            }
         }
         exit(0);
     }
