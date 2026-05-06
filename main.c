@@ -236,16 +236,8 @@ int main(int argc, char *argv[]) {
             exit(1);
         }
         if (do_all) {
-            struct dirent *dp;
-            DIR *dir;
-            dir = opendir(journalroot);
-            while ((dp = readdir(dir)) != NULL) {
-                if (!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, ".."))
-                    continue;
-                if (isdigit(*dp->d_name)) {
-                    for (int w = week; w < WEEK_MAX; w++)
-                        dump_week(journalroot, year, w, style);
-                }
+            for (int w = week; w < WEEK_MAX; w++) {
+                dump_week(journalroot, year, w, style);
             }
         } else {
             if (dump_week(journalroot, year, week, style) < 0) {

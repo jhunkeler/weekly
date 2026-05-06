@@ -100,5 +100,6 @@ int dir_empty(const char *path);
 char *find_program(const char *name);
 int make_path(char *basepath);
 char *make_output_path(char *basepath, char *path, int year, int week, int day_of_week);
+int isdigit_s(const char *s);
 
 #endif // WEEKLY_H

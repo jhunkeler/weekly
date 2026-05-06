@@ -171,4 +171,3 @@ char *make_output_path(char *basepath, char *path, int year, int week, int day_o
 
     return path;
 }
-
